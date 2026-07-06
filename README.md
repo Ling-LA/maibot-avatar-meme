@@ -131,7 +131,7 @@ ling_avatar-meme/
 
 ## 📄 许可证
 
-MIT © ling
+MIT © Ling-LA
 
 ---
 
