@@ -419,6 +419,13 @@ def _get_effects_list(v2: bool = False) -> list[tuple[str, str]]:
     return [(k, v) for k, v in src.items()]
 
 
+def _mask_qq(qq: str) -> str:
+    """QQ 号脱敏：保留前3位，其余变 *"""
+    if not qq or len(qq) < 4:
+        return "***"
+    return qq[:3] + "*" * (len(qq) - 3)
+
+
 def _find_effect_v1(keyword: str) -> str | None:
     """Find v1 effect by index, exact value, exact name, or substring."""
     kw = keyword.strip()
@@ -488,11 +495,27 @@ def _build_menu_image(page: int, v2: bool = False) -> bytes | None:
     img = Image.new("RGB", (img_w, img_h), bg)
     draw = ImageDraw.Draw(img)
 
-    # Try to load font
+    # Try to load font (cross-platform)
+    font_dir = os.path.join(os.path.dirname(__file__), "fonts")
     font_paths = [
-        "C:/Windows/Fonts/msyh.ttc",  # Microsoft YaHei
-        "C:/Windows/Fonts/simhei.ttf",  # SimHei
+        # Bundled font (if user drops one in fonts/)
+        os.path.join(font_dir, "cjk.ttf"),
+        os.path.join(font_dir, "cjk.otf"),
+        # Windows
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
         "C:/Windows/Fonts/simsun.ttc",
+        # macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        # Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
+        # Generic fallback
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
     font = font_sm = font_xs = None
     for fp in font_paths:
@@ -621,7 +644,18 @@ async def _fetch_online_effects(logger=None) -> dict[str, str] | None:
     if not pairs:
         return None
 
-    return {value: name for name, value in pairs}
+    # Validate: reject upstream anomalies (max key 50 chars, max name 80 chars)
+    cleaned: dict[str, str] = {}
+    for name, value in pairs:
+        if len(value) > 50 or len(name) > 80:
+            if logger:
+                logger.warning(f"忽略异常效果项: value={value[:30]}... name={name[:30]}...")
+            continue
+        cleaned[value] = name
+    if not cleaned:
+        return None
+
+    return cleaned
 
 
 async def _sync_effects(logger=None, force: bool = False) -> tuple[int, int]:
@@ -857,7 +891,7 @@ class AvatarMemePlugin(MaiBotPlugin):
                 v, n = random.choice(choices)
                 effect = v
             name = V2_EFFECTS.get(effect, effect)
-            self.ctx.logger.info(f"V2表情包 qq1={qq1} qq2={qq2} meme={effect} ({name})")
+            self.ctx.logger.info(f"V2表情包 qq1={_mask_qq(qq1)} qq2={_mask_qq(qq2)} meme={effect} ({name})")
             result = await self._call_api(effect, qq1, qq2, v2=True)
             if result is None:
                 await self.ctx.send.text(f"❌ [{name}] 生成失败", stream_id)
@@ -872,7 +906,7 @@ class AvatarMemePlugin(MaiBotPlugin):
         if not effect:
             effect = random.choice(list(EFFECTS.keys()))
         name = EFFECTS.get(effect, effect)
-        self.ctx.logger.info(f"表情包 qq={qq} meme={effect} ({name})")
+        self.ctx.logger.info(f"表情包 qq={_mask_qq(qq)} meme={effect} ({name})")
         result = await self._call_api(effect, qq)
         if result is None:
             await self.ctx.send.text(f"❌ [{name}] 生成失败", stream_id)
