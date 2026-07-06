@@ -17,7 +17,7 @@
 
 ```bash
 cd MaiBot/plugins
-git clone https://github.com/Ling-LA/maibot-avatar-meme.git ling_avatar-meme
+git clone https://github.com/Ling-LA/maibot-avatar-meme.git
 ```
 
 或直接下载 zip 解压到 `MaiBot/plugins/ling_avatar-meme/`。
