@@ -1,0 +1,9 @@
+[plugin]
+enabled = true
+config_version = "3.3.0"
+
+# V1 单人效果 API Key（从 https://apix.iqfk.top 获取）
+api_key = "在此填入你的 API Key"
+
+# V2 双人效果 API Key（从 https://apix.iqfk.top 获取）
+api_key_v2 = "在此填入你的 V2 API Key"
