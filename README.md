@@ -15,14 +15,6 @@
 
 ## 📥 安装
 
-### 方式一：插件中心安装（推荐）
-
-1. 在 MaiBot WebUI 进入「插件市场」
-2. 搜索 `ling.avatar-meme`
-3. 点击安装
-
-### 方式二：手动安装
-
 ```bash
 cd MaiBot/plugins
 git clone https://github.com/Ling-LA/maibot-avatar-meme.git ling_avatar-meme
