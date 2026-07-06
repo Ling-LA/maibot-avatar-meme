@@ -5,14 +5,14 @@
   "description": "输入QQ号或@某人，用其头像制作精神小伙、我太难了、暗中观察等搞笑表情包。",
   "author": {
     "name": "ling",
-    "url": "https://github.com/ling"
+    "url": "https://github.com/Ling-LA"
   },
   "license": "MIT",
   "urls": {
-    "repository": "https://github.com/ling/maibot-avatar-meme",
-    "homepage": "https://github.com/ling/maibot-avatar-meme",
-    "documentation": "https://github.com/ling/maibot-avatar-meme",
-    "issues": "https://github.com/ling/maibot-avatar-meme/issues"
+    "repository": "https://github.com/Ling-LA/maibot-avatar-meme",
+    "homepage": "https://github.com/Ling-LA/maibot-avatar-meme",
+    "documentation": "https://github.com/Ling-LA/maibot-avatar-meme",
+    "issues": "https://github.com/Ling-LA/maibot-avatar-meme/issues"
   },
   "host_application": {
     "min_version": "1.0.0",
