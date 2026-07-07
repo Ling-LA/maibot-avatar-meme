@@ -374,24 +374,6 @@ EFFECTS = {
     "pao": "跑",
     "yao": "摇",
     "ok": "ok",
-    "ly01": "LY-1舰载激光武器",
-    "little_do": "小掘",
-    "do": "超市",
-    "can_can_need": "看看你的",
-    "oral_sex": "口",
-    "lash": "鞭打",
-    "fencing": "击剑",
-    "hug": "抱抱",
-    "beat_up": "揍",
-    "rub": "贴贴",
-    "pigcar": "猪猪车",
-    "dorochui": "doro锤",
-    "chiikawa": "吉伊卡哇",
-    "qi": "骑",
-    "nantongjue": "男铜",
-    "nvtongjue": "女铜",
-    "mixue_stick_beaten_fresh_orange": "棒打鲜橙",
-    "mixue_jasmine_milk_green": "茉莉奶绿",
 }
 
 # V2 效果（需要两个QQ号，调用 sv2 接口）
@@ -663,7 +645,7 @@ async def _fetch_online_effects(logger=None) -> dict[str, str] | None:
 
 
 async def _sync_effects(logger=None, force: bool = False) -> tuple[int, int]:
-    """Check for new effects online and merge into EFFECTS dict.
+    """Check for new effects online and merge into EFFECTS + V2_EFFECTS separately.
 
     Daily cache: only fetches once per calendar day unless force=True.
     Returns (new_count, total_count).
@@ -673,30 +655,59 @@ async def _sync_effects(logger=None, force: bool = False) -> tuple[int, int]:
 
     today = time.strftime("%Y-%m-%d")
     if not force and _daily_cache_date == today:
-        return 0, len(EFFECTS)
+        return 0, len(EFFECTS) + len(V2_EFFECTS)
 
     online = await _fetch_online_effects(logger)
     if online is None:
-        return 0, len(EFFECTS)
+        return 0, len(EFFECTS) + len(V2_EFFECTS)
 
-    # Merge: online effects overwrite by value, keep local extras
-    merged = dict(online)
+    # Split online effects into V1 and V2 based on known V2 keys
+    v2_keys = set(V2_EFFECTS.keys())
+    v1_online: dict[str, str] = {}
+    v2_online: dict[str, str] = {}
+    for value, name in online.items():
+        if value in v2_keys:
+            v2_online[value] = name
+        else:
+            v1_online[value] = name
+
+    # Merge V1: online overwrites by value, keep local extras
+    merged_v1 = dict(v1_online)
     for value, name in EFFECTS.items():
-        if value not in merged:
-            merged[value] = name
+        if value not in v2_keys and value not in merged_v1:
+            merged_v1[value] = name
 
-    new_count = len(merged) - len(EFFECTS)
-    if new_count > 0 or force:
+    # Merge V2: online overwrites by value, keep local extras
+    merged_v2 = dict(v2_online)
+    for value, name in V2_EFFECTS.items():
+        if value not in merged_v2:
+            merged_v2[value] = name
+
+    v1_new = len(merged_v1) - len(EFFECTS)
+    v2_new = len(merged_v2) - len(V2_EFFECTS)
+    total_new = v1_new + v2_new
+
+    if total_new > 0 or force:
         EFFECTS.clear()
-        EFFECTS.update(merged)
+        EFFECTS.update(merged_v1)
+        V2_EFFECTS.clear()
+        V2_EFFECTS.update(merged_v2)
         _save_cached_effects(dict(EFFECTS))
         _daily_cache_date = today
         if logger:
-            logger.info(f"🎭 发现 {new_count} 个新效果，共 {len(EFFECTS)} 种（今日已缓存）")
+            parts = []
+            if v1_new:
+                parts.append(f"V1 +{v1_new}")
+            if v2_new:
+                parts.append(f"V2 +{v2_new}")
+            logger.info(
+                f"🎭 效果同步完成 | V1: {len(EFFECTS)}种 V2: {len(V2_EFFECTS)}种"
+                + (f" ({', '.join(parts)})" if parts else "")
+            )
     else:
-        _daily_cache_date = today  # mark as checked even if no new effects
+        _daily_cache_date = today
 
-    return new_count, len(EFFECTS)
+    return total_new, len(EFFECTS) + len(V2_EFFECTS)
 
 
 class AvatarMemePlugin(MaiBotPlugin):
@@ -710,8 +721,11 @@ class AvatarMemePlugin(MaiBotPlugin):
 
         cached = _load_cached_effects()
         if cached:
+            v2_keys = set(V2_EFFECTS.keys())
             for value, name in cached.items():
-                EFFECTS[value] = name
+                # 过滤缓存中可能混入的 V2 效果
+                if value not in v2_keys:
+                    EFFECTS[value] = name
 
         self.ctx.logger.info(f"QQ表情包插件 v3.3 加载 | V1:{len(EFFECTS)}种 V2:{len(V2_EFFECTS)}种")
 
