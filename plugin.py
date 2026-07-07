@@ -1,4 +1,4 @@
-"""QQ头像表情包插件 v3.0
+"""QQ头像表情包插件 v3.4
 
 通过 /表情 命令，输入QQ号或@某人，调用 apix.iqfk.top 聚合SV2接口生成搞笑表情包。
 支持 307 种效果，/表情列表 生成图片菜单。
@@ -39,6 +39,10 @@ _last_update_check: float = 0
 _daily_cache_date: str = ""  # YYYY-MM-DD of last fetch
 _update_lock = asyncio.Lock()
 _plugin_dir: Path | None = None
+
+# Group member cache for @mention resolution
+_group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_GROUP_MEMBER_CACHE_TTL: float = 300.0  # 5 minutes
 
 
 class PluginSectionConfig(PluginConfigBase):
@@ -830,7 +834,14 @@ class AvatarMemePlugin(MaiBotPlugin):
     # ── @mention resolution ─────────────────────────────────
 
     async def _resolve_at_mentions(self, target: str, message: dict) -> list[str]:
-        """Resolve @display_name to QQ. Only @self works (sender match)."""
+        """Resolve @display_name to QQ using message segments + group member list.
+
+        策略：
+        1. 从消息的 at segment 中提取 name→QQ 映射（同一条消息里如果有
+           真实 @，可以帮我们解析复制的 @文本）
+        2. 查群成员列表匹配昵称/群名片
+        3. 兜底：发送者自身匹配
+        """
         mentions: list[str] = re.findall(r"@(\S+)", target)
         if not mentions:
             return []
@@ -838,24 +849,104 @@ class AvatarMemePlugin(MaiBotPlugin):
         qqs: list[str] = []
         seen: set[str] = set()
 
+        def add_qq(qq: str) -> None:
+            if qq and qq not in seen:
+                qqs.append(qq)
+                seen.add(qq)
+
+        # ── 1. 从消息 at segment 构建 name→QQ 映射 ──
+        name_to_qq: dict[str, str] = {}
+        if isinstance(message, dict):
+            segments = message.get("raw_message")
+            if isinstance(segments, list):
+                for seg in segments:
+                    if not isinstance(seg, dict):
+                        continue
+                    if str(seg.get("type") or "").lower() == "at":
+                        data = seg.get("data")
+                        if isinstance(data, dict):
+                            qq = str(data.get("target_user_id") or data.get("qq") or data.get("user_id") or "")
+                            display = str(data.get("name") or data.get("display") or "")
+                            if qq and display:
+                                name_to_qq[display] = qq
+
+        # ── 2. 从 at segment 匹配 ──
+        for name in mentions:
+            if name in name_to_qq:
+                add_qq(name_to_qq[name])
+
+        # ── 3. 查群成员列表匹配未解析的 @mention ──
+        unresolved = [m for m in mentions if m not in name_to_qq]
+        if unresolved and isinstance(message, dict):
+            group_info = (message.get("message_info") or {}).get("group_info")
+            if isinstance(group_info, dict):
+                group_id = str(group_info.get("group_id") or "")
+                if group_id:
+                    members = await self._get_group_members_cached(group_id)
+                    if members:
+                        for member in members:
+                            if not isinstance(member, dict):
+                                continue
+                            member_qq = str(member.get("user_id") or "")
+                            if not member_qq or member_qq in seen:
+                                continue
+                            member_names = {
+                                str(member.get("nickname") or ""),
+                                str(member.get("card") or ""),
+                            }
+                            member_names.discard("")
+                            for uname in unresolved:
+                                if uname in member_names:
+                                    add_qq(member_qq)
+                                    break
+
+        # ── 4. 兜底：发送者自身 ──
         user_info = (message.get("message_info") or {}).get("user_info", {})
         sender_qq = str(user_info.get("user_id", ""))
         sender_nick = user_info.get("user_nickname", "")
         sender_card = user_info.get("user_cardname") or ""
 
         for name in mentions:
-            if name in (sender_nick, sender_card) and sender_qq and sender_qq not in seen:
-                qqs.append(sender_qq)
-                seen.add(sender_qq)
+            if name in (sender_nick, sender_card):
+                add_qq(sender_qq)
 
         return qqs
+
+    async def _get_group_members_cached(self, group_id: str) -> list[dict[str, Any]] | None:
+        """获取群成员列表，带 5 分钟内存缓存。"""
+        now = time.time()
+        cached = _group_member_cache.get(group_id)
+        if cached and now - cached[0] < _GROUP_MEMBER_CACHE_TTL:
+            return cached[1]
+
+        try:
+            members = await self.ctx.api.call(
+                "adapter.napcat.group.get_group_member_list",
+                group_id=group_id,
+            )
+        except Exception as e:
+            self.ctx.logger.warning(f"获取群成员列表失败 (group={group_id}): {e}")
+            # 如果 API 调用失败，保留旧缓存（如有）继续用
+            if cached:
+                return cached[1]
+            return None
+
+        if isinstance(members, list) and members:
+            _group_member_cache[group_id] = (now, members)
+            self.ctx.logger.debug(f"群成员列表已缓存 (group={group_id}, {len(members)}人)")
+            return members
+
+        # 空列表也缓存短期，避免重复请求
+        _group_member_cache[group_id] = (now, [])
+        self.ctx.logger.debug(f"群成员列表为空 (group={group_id})")
+        return []
 
     # ── commands ─────────────────────────────────────────────
 
     @Command(
         "avatar_meme",
         description="用QQ号头像制作表情包",
-        pattern=r"^[/／]表情\s*(?P<target>.+)?$",
+        pattern=r"^[/／]表情\s+(?P<target>.+)$",
     )
     async def handle_meme(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         matched_groups: dict = kwargs.get("matched_groups") or {}
@@ -1001,6 +1092,16 @@ class AvatarMemePlugin(MaiBotPlugin):
         b64 = base64.b64encode(img_bytes).decode("utf-8")
         await self.ctx.send.image(b64, stream_id)
         return True, f"V2菜单 p{page}/{total_pages}", True
+
+    @Command(
+        "meme_bare",
+        description="表情包帮助（无参数）",
+        pattern=r"^[/／]表情$",
+    )
+    async def handle_bare(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        await self.ctx.send.text(_help_text(), stream_id)
+        return True, "帮助（无参数）", True
 
     @Command(
         "meme_help",
