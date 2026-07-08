@@ -29,7 +29,7 @@ git clone https://github.com/Ling-LA/maibot-avatar-meme.git
 ```toml
 [plugin]
 enabled = true
-config_version = "3.4.0"
+config_version = "3.4.1"
 api_key = "你的V1_API_KEY"      # 用于单人效果（sv1）
 api_key_v2 = "你的V2_API_KEY"    # 用于双人效果（sv2）
 ```
@@ -116,6 +116,9 @@ ling_avatar-meme/
 ```
 
 ## 📝 更新日志
+
+### v3.4.1
+与 v3.4.0 相同，版本号修正以确保插件市场正确推送。
 
 ### v3.4.0
 - 🐛 修复复制/手动输入 `@某人` 无法识别（通过群成员列表查昵称/群名片解析）
