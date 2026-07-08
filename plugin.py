@@ -738,29 +738,26 @@ class AvatarMemePlugin(MaiBotPlugin):
     # ── helpers ──────────────────────────────────────────────
 
     async def _extract_all_qqs(self, target: str, raw_text: str, message: Any = None) -> list[str]:
-        """Extract ALL QQ numbers from message segments and target text.
-        
-        Order: @mentions first (from message dict), then plain numbers from text.
-        Deduplicated while preserving order.
+        """Extract ALL QQ numbers, preserving @mention order in target text.
+
+        先收集所有 name→QQ 映射（segment + 群成员 + 发送者），再按
+        target 中 @mention 的出现顺序添加，确保 V2 双人效果的先后
+        顺序与用户输入一致。
         """
+        target_str = str(target)
         qqs: list[str] = []
         seen: set[str] = set()
 
-        def add_from_segment(qq: Any) -> None:
-            """Add from message segment — trust the source, minimal validation."""
-            qq = str(qq).strip()
+        def add_qq(qq: str) -> None:
+            qq = qq.strip()
             if qq and qq not in seen:
                 qqs.append(qq)
                 seen.add(qq)
 
-        def add_from_text(qq: str) -> None:
-            """Add from text — only accept valid QQ numbers."""
-            qq = str(qq).strip()
-            if qq.isdigit() and qq not in seen and 5 <= len(qq) <= 12:
-                qqs.append(qq)
-                seen.add(qq)
+        # ── A. 构建 name→QQ 映射（所有来源） ──
+        name_to_qq: dict[str, str] = {}
 
-        # 1. @mentions from message dict's raw_message segments
+        # A1. 消息 at segment（name 来自 data.name）
         if isinstance(message, dict):
             segments = message.get("raw_message")
             if isinstance(segments, list):
@@ -770,22 +767,68 @@ class AvatarMemePlugin(MaiBotPlugin):
                     if str(seg.get("type") or "").lower() == "at":
                         data = seg.get("data")
                         if isinstance(data, dict):
-                            add_from_segment(data.get("target_user_id") or data.get("qq") or data.get("user_id"))
+                            qq = str(data.get("target_user_id") or data.get("qq") or data.get("user_id") or "")
+                            display = str(data.get("name") or data.get("display") or "")
+                            if qq and display and display not in name_to_qq:
+                                name_to_qq[display] = qq
 
-        # 2. CQ codes in text (safety: coerce to str)
-        for src in (str(raw_text), str(target)):
-            for m in re.finditer(r"\[CQ:at,qq=(\d+)\]", src):
-                add_from_text(m.group(1))
-
-        # 3. Plain QQ numbers from target text
-        for m in re.finditer(r"(\d{5,12})", str(target)):
-            add_from_text(m.group(1))
-
-        # 4. Resolve @display_name mentions via group member list
+        # A2. 群成员列表
         if isinstance(message, dict):
-            resolved = await self._resolve_at_mentions(target, message)
-            for qq in resolved:
-                add_from_segment(qq)
+            group_info = (message.get("message_info") or {}).get("group_info")
+            if isinstance(group_info, dict):
+                group_id = str(group_info.get("group_id") or "")
+                if group_id:
+                    members = await self._get_group_members_cached(group_id)
+                    if members:
+                        for member in members:
+                            if not isinstance(member, dict):
+                                continue
+                            member_qq = str(member.get("user_id") or "")
+                            if not member_qq:
+                                continue
+                            for field in ("nickname", "card"):
+                                name = str(member.get(field) or "").strip()
+                                if name and name not in name_to_qq:
+                                    name_to_qq[name] = member_qq
+
+        # A3. 发送者自身（@我 / @自己 等）
+        if isinstance(message, dict):
+            user_info = (message.get("message_info") or {}).get("user_info", {})
+            sender_qq = str(user_info.get("user_id", ""))
+            if sender_qq:
+                for field in ("user_nickname", "user_cardname"):
+                    name = str(user_info.get(field) or "").strip()
+                    if name and name not in name_to_qq:
+                        name_to_qq[name] = sender_qq
+
+        # ── B. 按 target 中 @mention 的出现顺序添加 QQ ──
+        mentions = re.findall(r"@(\S+)", target_str)
+        for m in mentions:
+            if m in name_to_qq:
+                add_qq(name_to_qq[m])
+
+        # ── C. CQ codes ──
+        for src in (str(raw_text), target_str):
+            for m in re.finditer(r"\[CQ:at,qq=(\d+)\]", src):
+                qq = m.group(1)
+                if qq.isdigit() and 5 <= len(qq) <= 12:
+                    add_qq(qq)
+
+        # ── D. 未被 @mention 覆盖的 segment QQ（兜底） ──
+        if isinstance(message, dict):
+            segments = message.get("raw_message")
+            if isinstance(segments, list):
+                for seg in segments:
+                    if not isinstance(seg, dict):
+                        continue
+                    if str(seg.get("type") or "").lower() == "at":
+                        data = seg.get("data")
+                        if isinstance(data, dict):
+                            add_qq(str(data.get("target_user_id") or data.get("qq") or data.get("user_id") or ""))
+
+        # ── E. 纯数字 QQ 号（兜底） ──
+        for m in re.finditer(r"(\d{5,12})", target_str):
+            add_qq(m.group(1))
 
         return qqs
 
