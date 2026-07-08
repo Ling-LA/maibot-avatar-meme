@@ -890,6 +890,7 @@ class AvatarMemePlugin(MaiBotPlugin):
                 add_qq(name_to_qq[name])
 
         # ── 3. 查群成员列表匹配未解析的 @mention ──
+        #     外层遍历 unresolved（保持 @ 出现顺序），内层查成员列表
         unresolved = [m for m in mentions if m not in name_to_qq]
         if unresolved and isinstance(message, dict):
             group_info = (message.get("message_info") or {}).get("group_info")
@@ -898,18 +899,18 @@ class AvatarMemePlugin(MaiBotPlugin):
                 if group_id:
                     members = await self._get_group_members_cached(group_id)
                     if members:
-                        for member in members:
-                            if not isinstance(member, dict):
-                                continue
-                            member_qq = str(member.get("user_id") or "")
-                            if not member_qq or member_qq in seen:
-                                continue
-                            member_names = {
-                                str(member.get("nickname") or ""),
-                                str(member.get("card") or ""),
-                            }
-                            member_names.discard("")
-                            for uname in unresolved:
+                        for uname in unresolved:
+                            for member in members:
+                                if not isinstance(member, dict):
+                                    continue
+                                member_qq = str(member.get("user_id") or "")
+                                if not member_qq or member_qq in seen:
+                                    continue
+                                member_names = {
+                                    str(member.get("nickname") or ""),
+                                    str(member.get("card") or ""),
+                                }
+                                member_names.discard("")
                                 if uname in member_names:
                                     add_qq(member_qq)
                                     break
